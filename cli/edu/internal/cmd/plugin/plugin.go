@@ -45,6 +45,20 @@ replaced.`,
 	}
 }
 
+// listRow is one `plugin list` entry: the manifest plus the host check.
+type listRow struct {
+	sdkplugin.Manifest
+	// Compatible is false when requires_host rejects this host version.
+	Compatible bool `json:"compatible"`
+}
+
+func (r listRow) status() string {
+	if r.Compatible {
+		return "ok"
+	}
+	return "needs host " + r.RequiresHost
+}
+
 func newListCmd(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
@@ -59,14 +73,18 @@ func newListCmd(f *cmdutil.Factory) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rows := make([]sdkplugin.Manifest, 0, len(installed))
+			rows := make([]listRow, 0, len(installed))
 			for _, p := range installed {
-				rows = append(rows, p.Manifest)
+				rows = append(rows, listRow{
+					Manifest:   p.Manifest,
+					Compatible: pluginmgr.CheckHostVersion(p.Manifest.RequiresHost, f.Version) == nil,
+				})
 			}
-			return output.Print(f.IOStreams.Out, mode, rows, []output.Column[sdkplugin.Manifest]{
-				{Header: "name", Value: func(m sdkplugin.Manifest) string { return m.Name }},
-				{Header: "version", Value: func(m sdkplugin.Manifest) string { return m.Version }},
-				{Header: "summary", Value: func(m sdkplugin.Manifest) string { return m.Summary }},
+			return output.Print(f.IOStreams.Out, mode, rows, []output.Column[listRow]{
+				{Header: "name", Value: func(r listRow) string { return r.Name }},
+				{Header: "version", Value: func(r listRow) string { return r.Version }},
+				{Header: "status", Value: listRow.status},
+				{Header: "summary", Value: func(r listRow) string { return r.Summary }},
 			})
 		},
 	}

@@ -16,6 +16,12 @@ import (
 
 func writeFake(t *testing.T, dir, name, version, summary string) {
 	t.Helper()
+	writeFakeRequiring(t, dir, name, version, summary, ">=0.1.0 <1")
+}
+
+// writeFakeRequiring writes a plugin whose manifest pins requires_host.
+func writeFakeRequiring(t *testing.T, dir, name, version, summary, requires string) {
+	t.Helper()
 	pdir := filepath.Join(dir, name)
 	if err := os.MkdirAll(pdir, 0o755); err != nil {
 		t.Fatal(err)
@@ -23,7 +29,7 @@ func writeFake(t *testing.T, dir, name, version, summary string) {
 	if err := os.WriteFile(filepath.Join(pdir, pluginmgr.BinaryName(name)), []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	m := sdkplugin.Manifest{SchemaVersion: "1", Name: name, Version: version, Summary: summary, RequiresHost: ">=0.1.0 <1"}
+	m := sdkplugin.Manifest{SchemaVersion: "1", Name: name, Version: version, Summary: summary, RequiresHost: requires}
 	data, _ := json.Marshal(m)
 	if err := os.WriteFile(filepath.Join(pdir, pluginmgr.ManifestFile), data, 0o644); err != nil {
 		t.Fatal(err)
@@ -51,7 +57,7 @@ func run(t *testing.T, outputFlag string, args ...string) string {
 func TestListEmpty(t *testing.T) {
 	t.Setenv("EDU_PLUGIN_DIR", t.TempDir())
 	got := run(t, "table", "list")
-	if strings.TrimSpace(got) != "NAME  VERSION  SUMMARY" {
+	if strings.TrimSpace(got) != "NAME  VERSION  STATUS  SUMMARY" {
 		t.Errorf("table = %q", got)
 	}
 	got = run(t, "json", "list")
@@ -63,7 +69,7 @@ func TestListEmpty(t *testing.T) {
 func TestListTwo(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("EDU_PLUGIN_DIR", dir)
-	writeFake(t, dir, "placement", "0.3.0", "Placement reference data")
+	writeFakeRequiring(t, dir, "placement", "0.3.0", "Placement reference data", ">=9.0.0")
 	writeFake(t, dir, "hello", "0.0.1", "Say hello")
 
 	got := run(t, "table", "list")
@@ -71,19 +77,23 @@ func TestListTwo(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("table = %q", got)
 	}
-	if !strings.HasPrefix(lines[1], "hello ") || !strings.Contains(lines[1], "0.0.1") || !strings.Contains(lines[1], "Say hello") {
+	if !strings.HasPrefix(lines[1], "hello ") || !strings.Contains(lines[1], "0.0.1") || !strings.Contains(lines[1], " ok ") || !strings.Contains(lines[1], "Say hello") {
 		t.Errorf("row 1 = %q", lines[1])
 	}
-	if !strings.HasPrefix(lines[2], "placement ") {
+	// An incompatible plugin stays listed and shows what it needs.
+	if !strings.HasPrefix(lines[2], "placement ") || !strings.Contains(lines[2], "needs host >=9.0.0") {
 		t.Errorf("row 2 = %q", lines[2])
 	}
 
-	var manifests []sdkplugin.Manifest
-	if err := json.Unmarshal([]byte(run(t, "json", "list")), &manifests); err != nil {
+	var rows []struct {
+		sdkplugin.Manifest
+		Compatible bool `json:"compatible"`
+	}
+	if err := json.Unmarshal([]byte(run(t, "json", "list")), &rows); err != nil {
 		t.Fatal(err)
 	}
-	if len(manifests) != 2 || manifests[0].Name != "hello" || manifests[1].RequiresHost != ">=0.1.0 <1" {
-		t.Errorf("json = %+v", manifests)
+	if len(rows) != 2 || rows[0].Name != "hello" || !rows[0].Compatible || rows[1].RequiresHost != ">=9.0.0" || rows[1].Compatible {
+		t.Errorf("json = %+v", rows)
 	}
 }
 

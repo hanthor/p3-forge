@@ -67,15 +67,19 @@ func Install(ctx context.Context, f *cmdutil.Factory, path string) (Installed, e
 		return Installed{}, fmt.Errorf("plugin manifest invalid: %w", err)
 	}
 
-	manifest, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
+	// Encoder, not MarshalIndent: requires_host holds `<` and `>`, which
+	// Marshal would write as \u003c and \u003e.
+	var manifest bytes.Buffer
+	enc := json.NewEncoder(&manifest)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(m); err != nil {
 		return Installed{}, err
 	}
-	manifest = append(manifest, '\n')
 	if err := os.Rename(bin, filepath.Join(stage, BinaryName(m.Name))); err != nil {
 		return Installed{}, err
 	}
-	if err := os.WriteFile(filepath.Join(stage, ManifestFile), manifest, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(stage, ManifestFile), manifest.Bytes(), 0o644); err != nil {
 		return Installed{}, fmt.Errorf("write manifest: %w", err)
 	}
 
